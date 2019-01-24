@@ -6,6 +6,5 @@
  * Time: 20:54
  */
 require __DIR__.'/vendor/autoload.php';
-
 $parser = new \Parser\DataScraperController();
-$parser->start();
+$parser->start($argv[1]);
