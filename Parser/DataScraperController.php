@@ -12,6 +12,7 @@ use Dotenv\Dotenv;
 use GuzzleHttp\Client;
 use Symfony\Component\DomCrawler\Crawler;
 use Util\StringUtil;
+use Util\WriteLostRequestToTxt;
 
 class DataScraperController
 {
@@ -28,22 +29,74 @@ class DataScraperController
         $guzzleClient = $this->getGuzzleClient();
         $CSRF = $this->getCSRF('https://search.ipaustralia.gov.au/trademarks/search/advanced', $guzzleClient);
         $postParameters = $this->getPostSearchParameters($CSRF, $arg);
-        $response = $guzzleClient->post('https://search.ipaustralia.gov.au/trademarks/search/doSearch', ['form_params' => $postParameters]);
-        $data = $this->getDataFromResponse($response->getBody()->getContents());
-        dump($data);
+        try {
+            $response = $guzzleClient->post('https://search.ipaustralia.gov.au/trademarks/search/doSearch', [
+                'form_params' => $postParameters
+            ]);
+        } catch (\Throwable $exception) {
+            WriteLostRequestToTxt::write(__DIR__ . '/../data/', $arg . ' - ' . $exception->getCode());
+        }
+        $this->getPaginationPages($response->getBody()->getContents(), $guzzleClient);
         die();
+    }
+
+    private function getPaginationPages($html, Client $client)
+    {
+        $data[] = $this->getDataFromResponse($html);
+        $urlParameter = $this->getUrlParameter($html);
+        $i = 1;
+        do {
+            try {
+                $response = $client->get('https://search.ipaustralia.gov.au/trademarks/search/result?s=' . $urlParameter . '&p=' . $i);
+            } catch (\Throwable $exception) {
+                WriteLostRequestToTxt::write(__DIR__ . '/../data/', 'https://search.ipaustralia.gov.au/trademarks/search/result?s=' . $urlParameter . '&p=' . $i . ' - ' . $exception->getCode());
+                continue;
+            }
+            $htmlData = $response->getBody()->getContents();
+            $finalFlag = $this->checkFinalPage($htmlData);
+            if (!$finalFlag){
+                $data[] = $this->getDataFromResponse($htmlData);
+            }
+        $i++;
+        } while ($finalFlag === false);
+
+    }
+
+    private function checkFinalPage($html):bool {
+        return preg_match('/You have no results/im' , $html);
+    }
+
+    private function getUrlParameter($html): string
+    {
+        return $this->between('input type\=\"hidden\" name\=\"s\" value\=\"', '\"', $html)[0];
     }
 
     private function getDataFromResponse($html)
     {
         $crawler = new Crawler($html);
         $array = [];
-        $crawler->filter('#resultsTable tr')
-            ->each(function (Crawler $trData) use (&$array){
-                if ($trData->filter('.trademark.words')->count()){
-                    dump(StringUtil::removeNl($trData->filter('.trademark.words')->text()));
+        $crawler->filter('#resultsTable tbody tr')
+            ->each(function (Crawler $trData) use (&$array) {
+                if ($trData->filter('.trademark.image img')->count()){
+                    $img = $trData->filter('.trademark.image img')->attr('src');
+                }else{
+                    $img = '';
                 }
+                $status = explode(': ' , StringUtil::removeNl($trData->filter('.status')->text()));
+                if (!isset($status[1])){
+                    $status[1] = '';
+                }
+                $array[] = [
+                    'number' => StringUtil::removeNl($trData->filter('.number')->text()),
+                    'logo_url' => $img,
+                    'name' => StringUtil::removeNl($trData->filter('.trademark.words')->text()),
+                    'classes' => StringUtil::removeNl($trData->filter('.classes')->text()),
+                    'status_1' => str_replace('●', '', $status[0]),
+                    'status_2' => $status[1],
+                    'details_page_url' => 'https://search.ipaustralia.gov.au' . $trData->filter('.number a')->attr('href'),
+                ];
             });
+        dump($array);
         die();
     }
 
@@ -104,7 +157,7 @@ class DataScraperController
         return $this->between('name\=\"\_csrf\" value\=\"', '\"', $response->getBody()->getContents())[0];
     }
 
-    private function getGuzzleClient():Client
+    private function getGuzzleClient(): Client
     {
         return new \GuzzleHttp\Client(
             [
@@ -140,7 +193,7 @@ class DataScraperController
     }
 
 
-    private function between($start, $end, $content):array
+    private function between($start, $end, $content): array
     {
 
         preg_match_all('~' . $start . '(.*?)' . $end . '~is', $content, $result);

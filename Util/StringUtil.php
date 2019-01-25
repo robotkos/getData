@@ -32,6 +32,10 @@ class StringUtil
     {
         return preg_replace('/<.*?>/im', ' ', $string);
     }
+    public static function removeSymbols(string $string)
+    {
+        return preg_replace('/[^\p{L}\p{N}\s]/u', '', $string);
+    }
 
     public static function removeHtmlComments(string $string)
     {
