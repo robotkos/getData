@@ -26,6 +26,7 @@ class DataScraperController
 
     public function start($arg)
     {
+        dump('Start getting data for you...');
         $guzzleClient = $this->getGuzzleClient();
         $CSRF = $this->getCSRF('https://search.ipaustralia.gov.au/trademarks/search/advanced', $guzzleClient);
         $postParameters = $this->getPostSearchParameters($CSRF, $arg);
@@ -36,11 +37,12 @@ class DataScraperController
         } catch (\Throwable $exception) {
             WriteLostRequestToTxt::write(__DIR__ . '/../data/', $arg . ' - ' . $exception->getCode());
         }
-        $this->getPaginationPages($response->getBody()->getContents(), $guzzleClient);
-        die();
+        $result = $this->getPaginationPages($response->getBody()->getContents(), $guzzleClient);
+        dump($result);
+        dump('Finished! Total results - ' . count($result));
     }
 
-    private function getPaginationPages($html, Client $client)
+    private function getPaginationPages($html, Client $client): array
     {
         $data[] = $this->getDataFromResponse($html);
         $urlParameter = $this->getUrlParameter($html);
@@ -55,15 +57,27 @@ class DataScraperController
             $htmlData = $response->getBody()->getContents();
             $finalFlag = $this->checkFinalPage($htmlData);
             if (!$finalFlag){
+//                array_push($data, $this->getDataFromResponse($htmlData));
                 $data[] = $this->getDataFromResponse($htmlData);
             }
         $i++;
         } while ($finalFlag === false);
 
+        return $this->convertArray($data);
     }
 
     private function checkFinalPage($html):bool {
         return preg_match('/You have no results/im' , $html);
+    }
+
+    private function convertArray(array $array):array {
+        $result = [];
+        foreach ($array as $item) {
+            foreach ($item as $item2) {
+                $result[] = $item2;
+            }
+        }
+        return $result;
     }
 
     private function getUrlParameter($html): string
@@ -71,7 +85,7 @@ class DataScraperController
         return $this->between('input type\=\"hidden\" name\=\"s\" value\=\"', '\"', $html)[0];
     }
 
-    private function getDataFromResponse($html)
+    private function getDataFromResponse($html):array
     {
         $crawler = new Crawler($html);
         $array = [];
@@ -96,8 +110,7 @@ class DataScraperController
                     'details_page_url' => 'https://search.ipaustralia.gov.au' . $trData->filter('.number a')->attr('href'),
                 ];
             });
-        dump($array);
-        die();
+        return $array;
     }
 
     private function getPostSearchParameters($csrf, $arg): array
